@@ -1,0 +1,60 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+require('dotenv').config();
+
+const authRoutes = require('./routes/authRoutes');
+const brandRoutes = require('./routes/brandRoutes');
+const projectRoutes = require('./routes/projectRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const postRoutes = require('./routes/postRoutes');
+const webhookRoutes = require('./routes/webhook');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.use('/api/webhooks', webhookRoutes);
+// HTTP sunucusu oluştur (Socket.IO için gerekli)
+const server = http.createServer(app);
+
+// Socket.IO kurulumu
+const io = new Server(server, {
+    cors: {
+        origin: '*', // Flutter'dan bağlantıya izin ver
+        methods: ['GET', 'POST']
+    }
+});
+
+// io'yu global olarak erişilebilir yap (videoProcessor.js kullanacak)
+global.io = io;
+
+// Socket.IO bağlantı yönetimi
+io.on('connection', (socket) => {
+    console.log(`[Socket.IO] 🔌 Yeni bağlantı: ${socket.id}`);
+
+    // Flutter'dan: "bu proje için video eventlerini dinliyorum"
+    socket.on('join_project', (projectId) => {
+        const room = `project_${projectId}`;
+        socket.join(room);
+        console.log(`[Socket.IO] Socket ${socket.id} → oda: ${room}`);
+        socket.emit('joined', { room, message: 'Odaya katıldınız.' });
+    });
+
+    socket.on('disconnect', () => {
+        console.log(`[Socket.IO] 🔌 Bağlantı koptu: ${socket.id}`);
+    });
+});
+
+app.use('/api/auth', authRoutes);
+app.use('/api/brand', brandRoutes);
+app.use('/api/project', projectRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/post', postRoutes);
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, () => {
+    console.log(`SM Planner çalışıyor: http://localhost:${PORT}`);
+    console.log(`[Socket.IO] WebSocket hazır: ws://localhost:${PORT}`);
+});

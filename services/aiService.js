@@ -32,6 +32,51 @@ async function uploadToBunnyCDN(sourceData, isBase64 = false, fileExt = 'jpg', m
 // uploadToBunnyCDN'i dışarıya aç (videoProcessor.js da kullanıyor)
 exports.uploadToBunnyCDN = uploadToBunnyCDN;
 
+/** Haziran 2026+: DALL·E API kapatıldı; GPT Image modelleri kullanılır. */
+const OPENAI_IMAGE_MODELS = ['gpt-image-2', 'gpt-image-1', 'gpt-image-1-mini'];
+
+function aspectRatioToOpenAiSize(imageAspectRatio) {
+    if (imageAspectRatio === '9:16') return '1024x1536';
+    if (imageAspectRatio === '16:9') return '1536x1024';
+    return '1024x1024';
+}
+
+/** OpenAI Images API — b64_json veya url ile CDN'e yükler. */
+async function generateImageWithOpenAI(promptModifier, imageAspectRatio) {
+    const size = aspectRatioToOpenAiSize(imageAspectRatio);
+    const prompt = promptModifier.substring(0, 32000);
+
+    for (const model of OPENAI_IMAGE_MODELS) {
+        try {
+            const response = await openai.images.generate({
+                model,
+                prompt,
+                n: 1,
+                size,
+                quality: 'medium',
+            });
+
+            const item = response.data?.[0];
+            if (!item) throw new Error('Boş görsel yanıtı');
+
+            if (item.b64_json) {
+                const url = await uploadToBunnyCDN(item.b64_json, true, 'jpg', 'image/jpeg');
+                console.log(`${model} görsel CDN'e yüklendi: ${url}`);
+                return url;
+            }
+            if (item.url) {
+                const url = await uploadToBunnyCDN(item.url, false, 'jpg', 'image/jpeg');
+                console.log(`${model} görsel CDN'e yüklendi: ${url}`);
+                return url;
+            }
+            throw new Error('b64_json veya url yok');
+        } catch (err) {
+            console.warn(`${model} (OpenAI) Görsel Üretim Hatası: ${err.message}`);
+        }
+    }
+    return null;
+}
+
 // Dünyanın her yerinden çağrılabilecek ana içerik üretim fonksiyonu
 exports.generateSmartContent = async (message_text, content_type) => {
     const selectedType = content_type ? content_type.toLowerCase() : 'post';
@@ -118,79 +163,12 @@ exports.generateSmartContent = async (message_text, content_type) => {
                 promptModifier += ` (Bu bir kaydırmalı post serisinin ${i + 1}. görselidir, diğer görsellerle tarz olarak uyumlu olmalıdır.)`;
             }
 
-            try {
-                const response = await ai.models.generateImages({
-                    model: 'imagen-4.0-generate-001',
-                    prompt: promptModifier,
-                    config: {
-                        numberOfImages: 1,
-                        aspectRatio: imageAspectRatio,
-                        outputMimeType: 'image/jpeg'
-                    }
-                });
-                
-                const base64String = response.generatedImages[0].image.imageBytes;
-                const permanentCdnUrl = await uploadToBunnyCDN(base64String, true, 'jpg', 'image/jpeg');
+            const permanentCdnUrl = await generateImageWithOpenAI(
+                promptModifier,
+                imageAspectRatio,
+            );
+            if (permanentCdnUrl) {
                 imageLinks.push(permanentCdnUrl);
-            } catch (err) {
-                console.warn(`Imagen 4.0 (Gemini) Görsel Üretim Hatası: ${err.message}`);
-                console.warn(`Yedek Imagen 3.0 modeline geçiliyor...`);
-                try {
-                    const response3 = await ai.models.generateImages({
-                        model: 'imagen-3.0-generate-002',
-                        prompt: promptModifier,
-                        config: {
-                            numberOfImages: 1,
-                            aspectRatio: imageAspectRatio,
-                            outputMimeType: 'image/jpeg'
-                        }
-                    });
-                    const base64String = response3.generatedImages[0].image.imageBytes;
-                    const permanentCdnUrl = await uploadToBunnyCDN(base64String, true, 'jpg', 'image/jpeg');
-                    imageLinks.push(permanentCdnUrl);
-                    console.log(`Imagen 3.0 görsel CDN'e yüklendi: ${permanentCdnUrl}`);
-                } catch (err3) {
-                    console.warn(`Imagen 3.0 (Gemini) Görsel Üretim Hatası: ${err3.message}`);
-                    console.warn(`Yedek OpenAI DALL-E 3 modeline geçiliyor...`);
-                    try {
-                        // Aspect ratio'yu DALL-E formatına çevir
-                        let dalleSize = '1024x1024';
-                        if (imageAspectRatio === '9:16') dalleSize = '1024x1792';
-                        else if (imageAspectRatio === '16:9') dalleSize = '1792x1024';
-
-                        const dalleResponse = await openai.images.generate({
-                            model: 'dall-e-3',
-                            prompt: promptModifier,
-                            n: 1,
-                            size: dalleSize
-                        });
-
-                        const imageUrl = dalleResponse.data[0].url;
-                        const permanentCdnUrl = await uploadToBunnyCDN(imageUrl, false, 'jpg', 'image/jpeg');
-                        imageLinks.push(permanentCdnUrl);
-                        console.log(`DALL-E 3 görsel CDN'e yüklendi: ${permanentCdnUrl}`);
-                    } catch (dalleErr) {
-                        console.warn(`DALL-E 3 Görsel Üretim Hatası: ${dalleErr.message}`);
-                        console.warn(`Yedek DALL-E 2 modeline geçiliyor...`);
-                        try {
-                            // DALL-E 2 sadece: 256x256, 512x512, 1024x1024 destekler
-                            const dalle2Response = await openai.images.generate({
-                                model: 'dall-e-2',
-                                prompt: promptModifier.substring(0, 1000), // DALL-E 2 max 1000 karakter
-                                n: 1,
-                                size: '1024x1024'
-                            });
-
-                            const imageUrl = dalle2Response.data[0].url;
-                            const permanentCdnUrl = await uploadToBunnyCDN(imageUrl, false, 'jpg', 'image/jpeg');
-                            imageLinks.push(permanentCdnUrl);
-                            console.log(`DALL-E 2 görsel CDN'e yüklendi: ${permanentCdnUrl}`);
-                        } catch (dalle2Err) {
-                            console.warn(`DALL-E 2 Görsel Üretim Hatası: ${dalle2Err.message}`);
-                            // Tüm servisler başarısız, metin kısmıyla devam edilecek
-                        }
-                    }
-                }
             }
         }
     }

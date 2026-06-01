@@ -54,7 +54,7 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/post', postRoutes);
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, () => {
     console.log(`SM Planner çalışıyor: http://localhost:${PORT}`);
     console.log(`[Socket.IO] WebSocket hazır: ws://localhost:${PORT}`);
     console.log(`Ağdan erişim (fiziksel cihaz): http://<Mac-IP>:${PORT}`);

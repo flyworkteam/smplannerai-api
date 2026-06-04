@@ -23,10 +23,11 @@ if (!fs.existsSync(TEMP_DIR)) {
 // ─────────────────────────────────────────────────────────────────
 // Socket.IO emit yardımcısı
 // ─────────────────────────────────────────────────────────────────
-function emitToProject(project_id, event, data) {
+function emitToProject(project_id, user_id, event, data) {
     if (global.io) {
-        global.io.to(`project_${project_id}`).emit(event, data);
-        console.log(`[Socket.IO] ↗️  Emit "${event}" → project_${project_id}`);
+        const room = project_id ? `project_${project_id}` : `user_${user_id}`;
+        global.io.to(room).emit(event, data);
+        console.log(`[Socket.IO] ↗️  Emit "${event}" → ${room}`);
     }
 }
 
@@ -125,7 +126,7 @@ async function processVideos(user_id, project_id, videoUrls) {
     console.log('========================================\n');
 
     // ── SOCKET: İşlem başladı bildirimi ──
-    emitToProject(project_id, 'video:processing', {
+    emitToProject(project_id, user_id, 'video:processing', {
         user_id,
         project_id,
         message: '🎬 Videolarınız indiriliyor ve birleştiriliyor...',
@@ -140,7 +141,7 @@ async function processVideos(user_id, project_id, videoUrls) {
             downloadedPaths.push(filePath);
 
             // Her video indirilince Flutter'ı güncelle
-            emitToProject(project_id, 'video:processing', {
+            emitToProject(project_id, user_id, 'video:processing', {
                 user_id,
                 project_id,
                 message: `🎬 Video ${i + 1}/${videoUrls.length} indirildi...`,
@@ -150,7 +151,7 @@ async function processVideos(user_id, project_id, videoUrls) {
         }
 
         // ADIM 2: Birleştir
-        emitToProject(project_id, 'video:processing', {
+        emitToProject(project_id, user_id, 'video:processing', {
             user_id,
             project_id,
             message: '⚙️ Videolar birleştiriliyor...',
@@ -160,7 +161,7 @@ async function processVideos(user_id, project_id, videoUrls) {
         await mergeVideos(downloadedPaths, outputPath);
 
         // ADIM 3: CDN'e yükle
-        emitToProject(project_id, 'video:processing', {
+        emitToProject(project_id, user_id, 'video:processing', {
             user_id,
             project_id,
             message: '☁️ Video yükleniyor...',
@@ -188,13 +189,15 @@ async function processVideos(user_id, project_id, videoUrls) {
         console.log(`[VideoProcessor] ✅ DB kaydı oluşturuldu: ai_chat_history.id=${dbResult.insertId}`);
 
         // Projenin kapak görselini güncelle
-        await pool.query(
-            'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
-            [cdnUrl, project_id]
-        );
+        if (project_id) {
+            await pool.query(
+                'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
+                [cdnUrl, project_id]
+            );
+        }
 
         // ── SOCKET: Video hazır! Flutter'a gönder ──
-        emitToProject(project_id, 'video:ready', {
+        emitToProject(project_id, user_id, 'video:ready', {
             user_id,
             project_id,
             chat_id: dbResult.insertId,
@@ -212,7 +215,7 @@ async function processVideos(user_id, project_id, videoUrls) {
         console.error(err.stack);
 
         // ── SOCKET: Hata bildirimi ──
-        emitToProject(project_id, 'video:error', {
+        emitToProject(project_id, user_id, 'video:error', {
             user_id,
             project_id,
             message: '⚠️ Video oluşturulurken bir hata oluştu. Lütfen tekrar deneyin.'

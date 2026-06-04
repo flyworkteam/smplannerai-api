@@ -35,12 +35,18 @@ global.io = io;
 io.on('connection', (socket) => {
     console.log(`[Socket.IO] 🔌 Yeni bağlantı: ${socket.id}`);
 
-    // Flutter'dan: "bu proje için video eventlerini dinliyorum"
     socket.on('join_project', (projectId) => {
         const room = `project_${projectId}`;
         socket.join(room);
         console.log(`[Socket.IO] Socket ${socket.id} → oda: ${room}`);
         socket.emit('joined', { room, message: 'Odaya katıldınız.' });
+    });
+
+    socket.on('join_user', (userId) => {
+        const room = `user_${userId}`;
+        socket.join(room);
+        console.log(`[Socket.IO] Socket ${socket.id} → oda: ${room}`);
+        socket.emit('joined', { room, message: 'Kullanıcı odasına katıldınız.' });
     });
 
     socket.on('disconnect', () => {

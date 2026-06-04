@@ -3,64 +3,86 @@ const axios = require('axios');
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+const LANGUAGE_NAMES = {
+    'tr': 'Türkçe',
+    'en': 'English',
+    'de': 'Deutsch',
+    'fr': 'Français',
+    'es': 'Español',
+    'it': 'Italiano',
+    'pt': 'Português',
+    'ru': 'Русский',
+    'ja': '日本語',
+    'ko': '한국어',
+    'zh': '中文',
+    'hi': 'हिन्दी',
+};
+
 /**
  * POST /api/gemini/generate-prompt
- * Body: { brand: { brandName, sector, targetAudience, brandColors }, contentType }
+ * Body: { brand: { brandName, sector, targetAudience, brandColors }, contentType, userLanguage? }
  * Returns: { prompt: "..." }
  */
 exports.generateBrandPrompt = async (req, res) => {
-    const { brand, contentType } = req.body;
+    const { brand, contentType, userLanguage = 'en' } = req.body;
 
     if (!brand || !contentType) {
         return res.status(400).json({ error: 'brand ve contentType zorunludur.' });
     }
 
+    const langName = LANGUAGE_NAMES[userLanguage] || 'English';
+
     const now = new Date();
     const upcomingDays = getUpcomingSpecialDays(now);
 
     const upcomingText = upcomingDays.length === 0
-        ? 'Yaklaşan özel bir gün bulunmuyor.'
-        : 'Yaklaşan özel günler:\n' + upcomingDays.map(d =>
-            `• ${d.name} (${d.daysLeft} gün sonra, ${d.date.getDate()}.${d.date.getMonth() + 1}.${d.date.getFullYear()})`
+        ? `No upcoming special days.`
+        : 'Upcoming special days:\n' + upcomingDays.map(d =>
+            `• ${d.name} (in ${d.daysLeft} days, ${d.date.getDate()}.${d.date.getMonth() + 1}.${d.date.getFullYear()})`
         ).join('\n');
 
     const colorText = (brand.brandColors && brand.brandColors.length > 0)
         ? brand.brandColors.join(', ')
-        : 'belirtilmemiş';
+        : 'not specified';
 
     const contentTypeLabel = getContentTypeLabel(contentType);
 
     const userPrompt = `
-Sen bir sosyal medya içerik uzmanısın. Aşağıdaki marka bilgilerine ve yaklaşan özel günlere göre, AI görsel üretecisi için Türkçe bir içerik promptu yaz.
+You are a social media content expert. Based on the brand information and upcoming special days below, write a social media content prompt for an AI image generator.
 
-MARKA BİLGİLERİ:
-- Marka Adı: ${brand.brandName || 'Markam'}
-- Sektör: ${brand.sector || 'belirtilmemiş'}
-- Hedef Kitle: ${brand.targetAudience || 'belirtilmemiş'}
-- Marka Renkleri: ${colorText}
+IMPORTANT LANGUAGE RULE: Write the prompt in ${langName} (language code: ${userLanguage}). The entire prompt MUST be in ${langName}.
 
-İÇERİK TÜRÜ: ${contentType} (${contentTypeLabel})
+BRAND INFORMATION:
+- Brand Name: ${brand.brandName || 'My Brand'}
+- Sector: ${brand.sector || 'not specified'}
+- Target Audience: ${brand.targetAudience || 'not specified'}
+- Brand Colors: ${colorText}
 
-BUGÜNÜN TARİHİ: ${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}
+CONTENT TYPE: ${contentType} (${contentTypeLabel})
+
+TODAY'S DATE: ${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}
 
 ${upcomingText}
 
-GÖREV:
-Yukarıdaki bilgilere dayanarak, bu marka için sosyal medya içeriği oluşturmak amacıyla kullanılacak bir Türkçe prompt yaz.
+TASK:
+Based on the information above, write a content prompt in ${langName} that will be used to create social media content for this brand.
 
-KURALLAR:
-- Prompt, görsel üretme yapay zekasına verilecek, bu yüzden görsel sahneyi, atmosferi ve içeriği net anlat
-- Marka adını, sektörü ve hedef kitleyi göz önünde bulundur
-- Eğer yaklaşan özel bir gün varsa (7 gün içinde), içeriği o güne göre tematik ayarla
-- Prompt 2-4 cümle olsun, doğrudan konuya gir
-- "Prompt:" veya başka etiket KULLANMA, sadece promptu yaz
-- Türkçe yaz
+RULES:
+- The prompt will be given to an AI image generator, so clearly describe the visual scene, atmosphere and content
+- Consider the brand name, sector and target audience
+- If there is an upcoming special day within 7 days, adjust the content thematically for that day
+- Keep the prompt 2-4 sentences, get straight to the point
+- Do NOT use labels like "Prompt:" or any other prefix — just write the prompt directly
+- WRITE ONLY IN ${langName}
 `;
 
     try {
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: userPrompt,
+            config: {
+                systemInstruction: `You are a social media content expert. You MUST write your entire response in ${langName} (language code: ${userLanguage}). Do NOT use any other language. Write ONLY in ${langName}.`
+            }
         });
 
         const promptText = response.text?.trim();
@@ -78,7 +100,13 @@ KURALLAR:
 
             const gptResponse = await openai.chat.completions.create({
                 model: 'gpt-4o-mini',
-                messages: [{ role: 'user', content: userPrompt }],
+                messages: [
+                    {
+                        role: 'system',
+                        content: `You are a social media content expert. You MUST write your entire response in ${langName} (language code: ${userLanguage}). Do NOT use any other language under any circumstances.`
+                    },
+                    { role: 'user', content: userPrompt }
+                ],
                 max_tokens: 300,
                 temperature: 0.9,
             });

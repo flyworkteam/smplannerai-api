@@ -181,3 +181,36 @@ exports.uploadProfilePhoto = async (req, res) => {
         res.status(500).json({ error: "Fotoğraf yüklenirken bir hata oluştu." });
     }
 };
+
+const SUPPORTED_LANGUAGES = ['en', 'de', 'it', 'fr', 'tr', 'ja', 'es', 'ru', 'ko', 'hi', 'pt', 'zh'];
+
+exports.updateLanguage = async (req, res) => {
+    try {
+        const { firebase_uid, language } = req.body;
+
+        if (!firebase_uid || !language) {
+            return res.status(400).json({ error: "firebase_uid ve language zorunludur." });
+        }
+
+        if (!SUPPORTED_LANGUAGES.includes(language)) {
+            return res.status(400).json({
+                error: `Geçersiz dil kodu. Desteklenen diller: ${SUPPORTED_LANGUAGES.join(', ')}`
+            });
+        }
+
+        const [result] = await pool.query(
+            'UPDATE users SET language = ? WHERE firebase_uid = ?',
+            [language, firebase_uid]
+        );
+
+        if (result.affectedRows > 0) {
+            const [updatedUser] = await pool.query('SELECT * FROM users WHERE firebase_uid = ?', [firebase_uid]);
+            return res.status(200).json({ message: "Dil tercihi güncellendi.", user: updatedUser[0] });
+        } else {
+            return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+        }
+    } catch (error) {
+        console.error("Update Language Error:", error);
+        res.status(500).json({ error: "Sunucu tarafında bir hata oluştu." });
+    }
+};

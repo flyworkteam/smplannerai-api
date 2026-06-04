@@ -10,6 +10,7 @@ const projectRoutes = require('./routes/projectRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const postRoutes = require('./routes/postRoutes');
 const webhookRoutes = require('./routes/webhook');
+const geminiRoutes = require('./routes/geminiRoutes');
 
 const app = express();
 app.use(cors());
@@ -52,6 +53,7 @@ app.use('/api/brand', brandRoutes);
 app.use('/api/project', projectRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/post', postRoutes);
+app.use('/api/gemini', geminiRoutes);
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

@@ -12,6 +12,8 @@ router.get('/profile/:firebase_uid', authController.getProfile);
 
 router.post('/update-profile', authController.updateProfile);
 
+router.post('/update-language', authController.updateLanguage);
+
 router.post('/upload-profile-photo', upload.single('photo'), authController.uploadProfilePhoto);
 
 module.exports = router;

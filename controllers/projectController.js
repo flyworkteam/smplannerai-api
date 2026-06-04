@@ -126,9 +126,9 @@ exports.addProjectItem = async (req, res) => {
             [projectId, user_id, media_url, caption || null, hashtags || null, format || 'post', source || 'ai_generated']
         );
 
-        // Proje kapak görseli boşsa ilk içeriği kapak yap
+        // Projenin kapak görselini her zaman en son eklenen içerikle güncelle
         await pool.query(
-            'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
+            'UPDATE projects SET image_url = ? WHERE id = ?',
             [media_url, projectId]
         );
 

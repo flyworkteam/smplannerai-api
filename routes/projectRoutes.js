@@ -13,5 +13,6 @@ router.delete('/:projectId', projectController.deleteProject);
 router.post('/:projectId/upload', upload.single('project_image'), projectController.uploadProjectImage);
 router.get('/:projectId/items', projectController.getProjectItems);
 router.post('/:projectId/items', projectController.addProjectItem);
+router.delete('/items/:itemId', projectController.deleteProjectItem);
 
 module.exports = router;

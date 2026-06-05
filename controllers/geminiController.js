@@ -48,9 +48,11 @@ exports.generateBrandPrompt = async (req, res) => {
     const contentTypeLabel = getContentTypeLabel(contentType);
 
     const userPrompt = `
-You are a social media content expert. Based on the brand information and upcoming special days below, write a social media content prompt for an AI image generator.
+You are a social media content expert. Based on the brand information and upcoming special days below, write a social media content prompt.
+This prompt will be shown to the user in their native language: ${langName}.
 
-IMPORTANT LANGUAGE RULE: Write the prompt in ${langName} (language code: ${userLanguage}). The entire prompt MUST be in ${langName}.
+CRITICAL LANGUAGE RULE: The ENTIRE output MUST be written in ${langName} (language code: ${userLanguage}). 
+Do NOT use English unless the requested language is English. Even though this prompt might be used for AI generation later, for now, you MUST write the text completely and exclusively in ${langName}.
 
 BRAND INFORMATION:
 - Brand Name: ${brand.brandName || 'My Brand'}
@@ -65,15 +67,13 @@ TODAY'S DATE: ${now.getDate()}.${now.getMonth() + 1}.${now.getFullYear()}
 ${upcomingText}
 
 TASK:
-Based on the information above, write a content prompt in ${langName} that will be used to create social media content for this brand.
+Write a 2-4 sentence content prompt in ${langName} describing the visual scene, atmosphere, and content for a social media ${contentTypeLabel}.
+Make sure to incorporate the brand identity and adapt the theme for any upcoming special days if applicable.
 
 RULES:
-- The prompt will be given to an AI image generator, so clearly describe the visual scene, atmosphere and content
-- Consider the brand name, sector and target audience
-- If there is an upcoming special day within 7 days, adjust the content thematically for that day
-- Keep the prompt 2-4 sentences, get straight to the point
-- Do NOT use labels like "Prompt:" or any other prefix — just write the prompt directly
-- WRITE ONLY IN ${langName}
+- Get straight to the point.
+- Do NOT use labels like "Prompt:" or any other prefix.
+- The output MUST be 100% in ${langName}. Absolutely no English words (unless they are brand names).
 `;
 
     try {

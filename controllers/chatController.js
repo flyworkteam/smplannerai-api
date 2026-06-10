@@ -298,3 +298,22 @@ exports.clearChatHistory = async (req, res) => {
         res.status(500).json({ error: "Sunucu tarafında bir hata oluştu." });
     }
 };
+
+// Belirli bir kullanıcının tarihe göre tüm sohbet geçmişini siler
+exports.clearUserChatHistoryByDate = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { date } = req.query; 
+
+        if (date) {
+            await pool.query('DELETE FROM ai_chat_history WHERE user_id = ? AND DATE(created_at) = ?', [userId, date]);
+        } else {
+            await pool.query('DELETE FROM ai_chat_history WHERE user_id = ?', [userId]);
+        }
+
+        return res.status(200).json({ message: "Kullanıcı sohbet geçmişi silindi." });
+    } catch (error) {
+        console.error("Clear User Chat History Error:", error);
+        res.status(500).json({ error: "Sunucu tarafında bir hata oluştu." });
+    }
+};

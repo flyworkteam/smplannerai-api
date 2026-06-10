@@ -23,4 +23,7 @@ router.get('/:projectId', chatController.getChatHistory);
 
 router.delete('/:projectId', chatController.clearChatHistory);
 
+// Kullanıcıya ait tüm veya belirli bir tarihteki sohbet geçmişini temizle
+router.delete('/user/:userId', chatController.clearUserChatHistoryByDate);
+
 module.exports = router;

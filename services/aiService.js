@@ -94,7 +94,7 @@ const LANGUAGE_NAMES = {
 };
 
 // Dünyanın her yerinden çağrılabilecek ana içerik üretim fonksiyonu
-exports.generateSmartContent = async (message_text, content_type, userLanguage = 'en') => {
+exports.generateSmartContent = async (message_text, content_type, userLanguage = 'en', referenceImageBuffer = null) => {
     const selectedType = content_type ? content_type.toLowerCase() : 'post';
     const langName = LANGUAGE_NAMES[userLanguage] || 'English';
 
@@ -121,14 +121,39 @@ OUTPUT RULES (STRICTLY REQUIRED):
         systemInstruction += `\n- Format: Engaging Instagram post caption (2-4 sentences) with relevant hashtags. Write in ${langName}.`;
     }
 
+    if (referenceImageBuffer) {
+        systemInstruction += `\n\nIMPORTANT: The user has attached a reference image. Analyze this image carefully and use it as inspiration for both the caption and the image generation prompt. Describe the visual style, colors, mood, and composition you see.`;
+    }
+
 
     // 2. Metin/Senaryo Üret (Gemini ilk tercih, hata durumunda OpenAI yedek)
     let aiResponseText = "";
     const langReminder = `IMPORTANT: Write your entire response in ${langName} only.`;
     try {
+        // Build Gemini contents — multimodal if reference image exists
+        let geminiContents;
+        if (referenceImageBuffer) {
+            geminiContents = [
+                {
+                    role: 'user',
+                    parts: [
+                        {
+                            inlineData: {
+                                mimeType: 'image/jpeg',
+                                data: referenceImageBuffer.toString('base64'),
+                            }
+                        },
+                        { text: `${langReminder}\n\nThe user attached a reference image above. Use it as inspiration.\n\n${message_text}` }
+                    ]
+                }
+            ];
+        } else {
+            geminiContents = `${langReminder}\n\n${message_text}`;
+        }
+
         const geminiResponse = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
-            contents: `${langReminder}\n\n${message_text}`,
+            contents: geminiContents,
             config: { systemInstruction: systemInstruction + ` Write in a warm, friendly tone. If the user later writes in a different language, switch to that language.` }
         });
         aiResponseText = geminiResponse.text;
@@ -143,6 +168,7 @@ OUTPUT RULES (STRICTLY REQUIRED):
         });
         aiResponseText = gptResponse.choices[0].message.content;
     }
+
 
 
     // 3. İçerik Üretimi (Video / Görsel)

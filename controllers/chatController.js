@@ -69,10 +69,11 @@ exports.sendMessage = async (req, res) => {
             });
         }
 
-        // ==========================================
-        // 3. DİĞER İÇERİKLER (POST, CAROUSEL VS. - ESKİ SİSTEM)
-        // ==========================================
-        const aiResult = await aiService.generateSmartContent(message_text, selectedType, selectedLang);
+        // Referans görsel varsa buffer'ını al (multer ile yüklendi)
+        const referenceImageBuffer = req.file ? req.file.buffer : null;
+
+        // 3. DİĞER İÇERİKLER (POST, CAROUSEL VS.)
+        const aiResult = await aiService.generateSmartContent(message_text, selectedType, selectedLang, referenceImageBuffer);
 
         // Veritabanına AI cevabını kaydet
         const dbImageUrlValue = aiResult.images.length > 0 ? JSON.stringify(aiResult.images) : null;

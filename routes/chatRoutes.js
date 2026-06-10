@@ -1,8 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const chatController = require('../controllers/chatController');
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-router.post('/', chatController.sendMessage);
+router.post('/', upload.single('reference_image'), chatController.sendMessage);
 
 // n8n otomasyonundan gelen video URL callback'i
 router.post('/n8n-callback', chatController.n8nCallback);

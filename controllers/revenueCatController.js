@@ -13,7 +13,7 @@ const handleWebhook = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid payload' });
     }
 
-    const { type, app_user_id, expiration_at_ms, period_type } = event;
+    const { type, app_user_id, expiration_at_ms, period_type, product_id } = event;
 
     // We assume app_user_id is our database user ID (integer)
     // If RevenueCat sends it as a string, ensure it matches our ID format
@@ -47,16 +47,23 @@ const handleWebhook = async (req, res) => {
         // Calculate expiration date
         // expiration_at_ms comes in milliseconds
         const premiumEndTime = new Date(expiration_at_ms);
+        
+        // Determine plan based on period_type or product_id
+        let plan = 'monthly';
+        if (period_type === 'ANNUAL' || (product_id && product_id.toLowerCase().includes('yearly'))) {
+          plan = 'yearly';
+        }
 
         await connection.execute(
           `UPDATE users 
            SET is_premium = 1, 
-               premium_expire_date = ? 
+               premium_expire_date = ?,
+               subscription_plan = ?
            WHERE id = ?`,
-          [premiumEndTime, userId]
+          [premiumEndTime, plan, userId]
         );
 
-        console.log(`[RevenueCat] Granted premium to User ${userId} until ${premiumEndTime}`);
+        console.log(`[RevenueCat] Granted premium to User ${userId} until ${premiumEndTime} with plan ${plan}`);
 
       } else if (REVOKE_ACCESS_EVENTS.includes(type)) {
         // Revoke access immediately (or keep until end date if logic differs)
@@ -64,7 +71,8 @@ const handleWebhook = async (req, res) => {
 
         await connection.execute(
           `UPDATE users 
-           SET is_premium = 0 
+           SET is_premium = 0,
+               subscription_plan = 'none'
            WHERE id = ?`,
           [userId]
         );

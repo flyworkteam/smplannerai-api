@@ -46,6 +46,7 @@ exports.sendMessage = async (req, res) => {
             axios.post(n8nWebhookUrl, {
                 user_id,
                 project_id,
+                session_id: sessionId,
                 message_text,
                 content_type: selectedType
             }).then(() => {
@@ -109,22 +110,184 @@ exports.sendMessage = async (req, res) => {
 };
 
 // ==========================================
+// KIE.AI TASK + BATCH MAPPING
+// task_id → context (hangi batch'e ait, hangi sahne)
+// batch_id → toplanan video URL'leri (3 sahneyi birleştirmek için)
+// ==========================================
+const kieTaskMap = new Map(); // task_id → { user_id, project_id, session_id, batch_id, scene_number, total_clips }
+const kieBatchMap = new Map(); // batch_id → { user_id, project_id, session_id, total_clips, received: [{scene, url}], timer }
+
+const BATCH_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika
+
+exports.registerKieTask = (task_id, context) => {
+    kieTaskMap.set(task_id, context);
+    console.log(`[KieTask] Kaydedildi: task_id=${task_id}`, context);
+
+    // batch_id varsa kieBatchMap'e de kaydet
+    const { batch_id, user_id, project_id, session_id, total_clips } = context;
+    if (batch_id && !kieBatchMap.has(batch_id)) {
+        const timer = setTimeout(() => {
+            // Timeout: gelenleri birleştir
+            const batch = kieBatchMap.get(batch_id);
+            if (!batch) return;
+            console.log(`[KieBatch] ⏰ Timeout! batch_id=${batch_id} | gelen=${batch.received.length}/${batch.total_clips}`);
+            _processBatch(batch_id);
+        }, BATCH_TIMEOUT_MS);
+
+        kieBatchMap.set(batch_id, {
+            user_id,
+            project_id,
+            session_id,
+            total_clips: total_clips || 3,
+            received: [],
+            timer
+        });
+        console.log(`[KieBatch] Yeni batch oluşturuldu: ${batch_id} | beklenen=${total_clips || 3} clip`);
+    }
+};
+
+/**
+ * Batch tamamlandığında veya timeout olduğunda çağrılır.
+ * Toplanan URL'leri sıralayıp processVideos'a gönderir.
+ */
+function _processBatch(batchId) {
+    const batch = kieBatchMap.get(batchId);
+    if (!batch) return;
+
+    // Timer'ı temizle
+    if (batch.timer) clearTimeout(batch.timer);
+    kieBatchMap.delete(batchId);
+
+    if (batch.received.length === 0) {
+        console.error(`[KieBatch] ❌ Hiç video gelmedi! batch_id=${batchId}`);
+        return;
+    }
+
+    // Sahne sırasına göre sırala
+    batch.received.sort((a, b) => a.scene - b.scene);
+    const sortedUrls = batch.received.map(r => r.url);
+
+    console.log(`[KieBatch] ✅ Batch tamamlandı: ${batchId} | ${sortedUrls.length}/${batch.total_clips} video birleştirilecek`);
+    
+    setImmediate(() => {
+        processVideos(batch.user_id, batch.project_id, sortedUrls, batch.session_id)
+            .then(() => console.log(`[KieBatch] processVideos tamamlandı | batch_id=${batchId}`))
+            .catch(err => console.error('[KieBatch] processVideos hatası:', err.message));
+    });
+}
+
+// ==========================================
 // N8N CALLBACK ENDPOINT
-// n8n otomasyon, video URL'lerini bu endpoint'e gönderir
+// 1) KIE.AI'dan gelen direkt callback (data.state + data.resultJson)
+// 2) n8n'den gelen task kayıt (submitted) callback
 // ==========================================
 exports.n8nCallback = (req, res) => {
-    // Anında 200 dönüyoruz — n8n timeout yemesin
+    // Anında 200 dönüyoruz — timeout yemesin
     res.status(200).json({ status: 'accepted', message: 'Video işleme başlatıldı.' });
 
-    // ──────────────────────────────────────────────────────
-    // Yanıt zaten gönderildi, şimdi arka planda işlemi başlat
-    // ──────────────────────────────────────────────────────
-    const { user_id, project_id, videos } = req.body;
+    const body = req.body;
+
+    // ── FORMAT 1: KIE.AI'ın direkt callback'i ──
+    if (body.code !== undefined && body.data?.taskId) {
+        const taskId = body.data.taskId;
+        const state = body.data.state;
+        console.log(`[KieCallback] KIE.AI direkt callback | taskId=${taskId}, state=${state}`);
+
+        if (state !== 'success') {
+            console.error(`[KieCallback] Task başarısız | taskId=${taskId}, state=${state}`);
+            // Başarısız sahneyi de batch'e "gelmedi" olarak işaretle
+            const context = kieTaskMap.get(taskId);
+            if (context?.batch_id) {
+                const batch = kieBatchMap.get(context.batch_id);
+                if (batch) {
+                    console.log(`[KieCallback] Başarısız sahne ${context.scene_number} batch'ten düşürüldü | ${batch.received.length}/${batch.total_clips - 1} kaldı`);
+                    batch.total_clips = Math.max(1, batch.total_clips - 1);
+                    if (batch.received.length >= batch.total_clips) {
+                        _processBatch(context.batch_id);
+                    }
+                }
+            }
+            kieTaskMap.delete(taskId);
+            return;
+        }
+
+        // resultJson string JSON içinde URL'leri çek
+        let videoUrls = [];
+        try {
+            const resultJson = JSON.parse(body.data.resultJson || '{}');
+            videoUrls = resultJson.resultUrls || [];
+        } catch (e) {
+            console.error('[KieCallback] resultJson parse hatası:', e.message);
+            return;
+        }
+
+        if (videoUrls.length === 0) {
+            console.error('[KieCallback] Video URL bulunamadı | taskId=', taskId);
+            return;
+        }
+
+        // Mapping'den context bul
+        const context = kieTaskMap.get(taskId);
+        if (!context) {
+            console.error(`[KieCallback] task_id için context bulunamadı: ${taskId}`);
+            return;
+        }
+        kieTaskMap.delete(taskId);
+
+        const { user_id, project_id, session_id, batch_id, scene_number } = context;
+        const url = videoUrls[0]; // Her task 1 video üretir
+
+        // ── BATCH MODU: batch_id varsa topla ──
+        if (batch_id) {
+            const batch = kieBatchMap.get(batch_id);
+            if (!batch) {
+                console.error(`[KieCallback] batch_id bulunamadı: ${batch_id}, tek video olarak işleniyor`);
+                setImmediate(() => {
+                    processVideos(user_id, project_id, videoUrls, session_id)
+                        .then(() => console.log(`[KieCallback] processVideos tamamlandı (fallback)`))
+                        .catch(err => console.error('[KieCallback] processVideos hatası:', err.message));
+                });
+                return;
+            }
+
+            batch.received.push({ scene: scene_number || batch.received.length + 1, url });
+            console.log(`[KieBatch] Sahne ${scene_number} geldi | batch=${batch_id} | ${batch.received.length}/${batch.total_clips}`);
+
+            // Tüm clip'ler geldiyse birleştir
+            if (batch.received.length >= batch.total_clips) {
+                _processBatch(batch_id);
+            }
+            return;
+        }
+
+        // ── TEK VIDEO MODU: batch_id yoksa eski mantık ──
+        console.log(`[KieCallback] Tek video işleniyor | user_id=${user_id}, project_id=${project_id}, session_id=${session_id}`);
+        setImmediate(() => {
+            processVideos(user_id, project_id, videoUrls, session_id)
+                .then(() => console.log(`[KieCallback] processVideos tamamlandı | project_id=${project_id}`))
+                .catch(err => console.error('[KieCallback] processVideos hatası:', err.message));
+        });
+        return;
+    }
+
+    // ── FORMAT 2: n8n workflow'unun gönderdiği callback ──
+    const { user_id, project_id, videos, task_id, status } = body;
+    const session_id = body.session_id || null;
+    const batch_id = body.batch_id || null;
+    const total_clips = body.total_clips || 1;
+    const scene_number = body.scene_number || 1;
+
+    // n8n task_id gönderiyorsa (submitted) → mapping kaydet
+    if (task_id && user_id && project_id !== undefined && (!videos || videos.length === 0)) {
+        exports.registerKieTask(task_id, { user_id, project_id, session_id, batch_id, scene_number, total_clips });
+        console.log(`[n8nCallback] Task kaydedildi: ${task_id} → batch=${batch_id}, sahne=${scene_number}/${total_clips}`);
+        return;
+    }
 
     // Temel doğrulama
     if (!user_id || project_id === undefined || !Array.isArray(videos) || videos.length === 0) {
-        console.error('[n8nCallback] Geçersiz payload:', req.body);
-        return; // res zaten gönderildi, sadece işlemi durdurabiliriz
+        console.error('[n8nCallback] Geçersiz payload:', body);
+        return;
     }
 
     console.log(`[n8nCallback] Arka plan işlemi başlatılıyor | user_id=${user_id}, project_id=${project_id}, video sayısı=${videos.length}`);

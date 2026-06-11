@@ -225,7 +225,7 @@ async function cleanupFiles(filePaths) {
 // ANA FONKSİYON
 // Tablo: ai_chat_history
 // ─────────────────────────────────────────────────────────────────
-async function processVideos(user_id, project_id, videoUrls) {
+async function processVideos(user_id, project_id, videoUrls, session_id = null) {
     const timestamp = Date.now();
     const downloadedPaths = [];
     const outputPath = path.join(TEMP_DIR, `merged_${user_id}_${project_id}_${timestamp}.mp4`);
@@ -236,7 +236,7 @@ async function processVideos(user_id, project_id, videoUrls) {
 
     console.log('\n========================================');
     console.log(`[VideoProcessor] 🚀 İŞLEM BAŞLADI`);
-    console.log(`  user_id: ${user_id} | project_id: ${project_id} | video: ${videoUrls.length}`);
+      console.log(`  user_id: ${user_id} | project_id: ${project_id} | session_id: ${session_id} | video: ${videoUrls.length}`);
     console.log('========================================\n');
 
     // ── SOCKET: İşlem başladı bildirimi ──
@@ -292,11 +292,12 @@ async function processVideos(user_id, project_id, videoUrls) {
         const readyMsg = msg('ready', lang);
         const [dbResult] = await pool.query(
             `INSERT INTO ai_chat_history 
-             (user_id, project_id, message_role, message_text, image_url) 
-             VALUES (?, ?, 'ai', ?, ?)`,
+             (user_id, project_id, session_id, message_role, message_text, image_url) 
+             VALUES (?, ?, ?, 'ai', ?, ?)`,
             [
                 user_id,
                 project_id,
+                session_id,
                 readyMsg,
                 JSON.stringify([cdnUrl])
             ]
@@ -341,9 +342,9 @@ async function processVideos(user_id, project_id, videoUrls) {
         try {
             await pool.query(
                 `INSERT INTO ai_chat_history 
-                 (user_id, project_id, message_role, message_text) 
-                 VALUES (?, ?, 'ai', ?)`,
-                [user_id, project_id, errorMsg]
+                 (user_id, project_id, session_id, message_role, message_text) 
+                 VALUES (?, ?, ?, 'ai', ?)`,
+                [user_id, project_id, session_id, errorMsg]
             );
         } catch (dbErr) {
             console.error('[VideoProcessor] DB hata kaydı başarısız:', dbErr.message);

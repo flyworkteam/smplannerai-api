@@ -1,7 +1,7 @@
 const axios = require('axios');
 const pool = require('../config/db');
 const aiService = require('../services/aiService');
-const { processVideos } = require('../services/videoProcessor');
+const { processVideos, emitToProject } = require('../services/videoProcessor');
 
 // Dil kodu → başlangıç mesajı (video üretimi başlatıldığında kullanıcıya gösterilir)
 const REELS_START_MESSAGES = {
@@ -18,6 +18,79 @@ const REELS_START_MESSAGES = {
     'zh': '好主意！我正在为您规划最有效的场景并合并多个视频。此过程可能需要几分钟——完成后我会通知您！ 🚀',
     'hi': 'शानदार विचार! मैं आपके लिए सबसे प्रभावी दृश्य योजना बना रहा हूं और कई वीडियो को मिला रहा हूं। इस प्रक्रिया में कुछ मिनट लग सकते हैं — पूरा होने पर मैं आपको सूचित करूंगा! 🚀',
 };
+
+const IMAGE_START_MESSAGES = {
+    'tr': 'Harika! Görselinizi oluşturuyorum, biraz sürebilir ✨',
+    'en': 'Great! Creating your image, this may take a moment ✨',
+    'de': 'Super! Dein Bild wird erstellt, einen Moment bitte ✨',
+    'fr': 'Super ! Création de votre image en cours ✨',
+    'es': '¡Genial! Creando tu imagen, un momento ✨',
+    'it': 'Ottimo! Creazione immagine in corso ✨',
+    'pt': 'Ótimo! Criando sua imagem ✨',
+    'ru': 'Отлично! Создаю изображение ✨',
+    'ja': '画像を作成しています ✨',
+    'ko': '이미지를 생성하고 있습니다 ✨',
+    'zh': '正在生成图片 ✨',
+    'hi': 'छवि बनाई जा रही है ✨',
+};
+
+async function processImageInBackground({
+    user_id,
+    project_id,
+    sessionId,
+    message_text,
+    selectedType,
+    selectedLang,
+    referenceImageBuffer,
+}) {
+    try {
+        emitToProject(project_id, user_id, 'image:processing', {
+            user_id,
+            project_id,
+            session_id: sessionId,
+            progress: 20,
+        });
+
+        const aiResult = await aiService.generateSmartContent(
+            message_text,
+            selectedType,
+            selectedLang,
+            referenceImageBuffer,
+        );
+
+        const dbImageUrlValue = aiResult.images.length > 0 ? JSON.stringify(aiResult.images) : null;
+        const [result] = await pool.query(
+            'INSERT INTO ai_chat_history (user_id, project_id, session_id, message_role, message_text, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+            [user_id, project_id || null, sessionId, 'ai', aiResult.text, dbImageUrlValue],
+        );
+
+        if (aiResult.images.length > 0 && project_id) {
+            await pool.query(
+                'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
+                [aiResult.images[0], project_id],
+            );
+        }
+
+        emitToProject(project_id, user_id, 'image:ready', {
+            user_id,
+            project_id,
+            session_id: sessionId,
+            chat_id: result.insertId,
+            image_urls: aiResult.images,
+            progress: 100,
+        });
+
+        console.log(`[ImageGen] ✅ session=${sessionId} images=${aiResult.images.length}`);
+    } catch (error) {
+        console.error('[ImageGen] Hata:', error.message);
+        emitToProject(project_id, user_id, 'image:error', {
+            user_id,
+            project_id,
+            session_id: sessionId,
+            message: error.message,
+        });
+    }
+}
 
 exports.sendMessage = async (req, res) => {
     try {
@@ -72,37 +145,30 @@ exports.sendMessage = async (req, res) => {
 
         // Referans görsel varsa buffer'ını al (multer ile yüklendi)
         const referenceImageBuffer = req.file ? req.file.buffer : null;
+        const imageStartMsg = IMAGE_START_MESSAGES[selectedLang] || IMAGE_START_MESSAGES['en'];
 
-        // POST, CAROUSEL vb. — üretim bitene kadar bekle, görsel URL'leri yanıtta dön
-        const aiResult = await aiService.generateSmartContent(
-            message_text,
-            selectedType,
-            selectedLang,
-            referenceImageBuffer,
-        );
-
-        const dbImageUrlValue = aiResult.images.length > 0 ? JSON.stringify(aiResult.images) : null;
-        const [result] = await pool.query(
-            'INSERT INTO ai_chat_history (user_id, project_id, session_id, message_role, message_text, image_url) VALUES (?, ?, ?, ?, ?, ?)',
-            [user_id, project_id || null, sessionId, 'ai', aiResult.text, dbImageUrlValue],
-        );
-
-        if (aiResult.images.length > 0 && project_id) {
-            await pool.query(
-                'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
-                [aiResult.images[0], project_id],
-            );
-        }
+        // Nginx 504 önlemek için hemen yanıt dön; görsel arka planda üretilir
+        setImmediate(() => {
+            processImageInBackground({
+                user_id,
+                project_id,
+                sessionId,
+                message_text,
+                selectedType,
+                selectedLang,
+                referenceImageBuffer,
+            }).catch((err) => console.error('[ImageGen] Beklenmedik hata:', err.message));
+        });
 
         return res.status(200).json({
-            message: 'İçerik başarıyla üretildi.',
+            message: 'Image production process started.',
             session_id: sessionId,
             user_message: message_text,
-            content_type: aiResult.format,
+            content_type: selectedType,
             ai_response: {
-                id: result.insertId,
-                text: aiResult.text,
-                images: aiResult.images,
+                id: null,
+                text: imageStartMsg,
+                images: [],
             },
         });
 
@@ -309,7 +375,23 @@ exports.n8nCallback = (req, res) => {
     });
 };
 
-// getChatHistory metodu aynen kalıyor...
+// 504 timeout sonrası Flutter'ın session'ı bulması için
+exports.getLatestSession = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const [rows] = await pool.query(
+            `SELECT session_id FROM ai_chat_history
+             WHERE user_id = ? AND session_id IS NOT NULL
+             ORDER BY created_at DESC LIMIT 1`,
+            [userId],
+        );
+        return res.status(200).json({ session_id: rows[0]?.session_id || null });
+    } catch (error) {
+        console.error('Get Latest Session Error:', error);
+        res.status(500).json({ error: 'Sunucu tarafında bir hata oluştu.' });
+    }
+};
+
 exports.getChatHistory = async (req, res) => {
     try {
         const { projectId } = req.params;

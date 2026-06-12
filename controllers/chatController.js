@@ -1,7 +1,7 @@
 const axios = require('axios');
 const pool = require('../config/db');
 const aiService = require('../services/aiService');
-const { processVideos, emitToProject } = require('../services/videoProcessor');
+const { processVideos } = require('../services/videoProcessor');
 
 // Dil kodu → başlangıç mesajı (video üretimi başlatıldığında kullanıcıya gösterilir)
 const REELS_START_MESSAGES = {
@@ -18,82 +18,6 @@ const REELS_START_MESSAGES = {
     'zh': '好主意！我正在为您规划最有效的场景并合并多个视频。此过程可能需要几分钟——完成后我会通知您！ 🚀',
     'hi': 'शानदार विचार! मैं आपके लिए सबसे प्रभावी दृश्य योजना बना रहा हूं और कई वीडियो को मिला रहा हूं। इस प्रक्रिया में कुछ मिनट लग सकते हैं — पूरा होने पर मैं आपको सूचित करूंगा! 🚀',
 };
-
-// Görsel üretimi başlatıldığında kullanıcıya gösterilir (async işlem)
-const IMAGE_START_MESSAGES = {
-    'tr': 'Harika! Senin için görseli oluşturuyorum. Bu işlem biraz sürebilir, tamamlandığında sana haber vereceğim! ✨',
-    'en': 'Great! I\'m creating your image. This may take a moment — I\'ll notify you when it\'s ready! ✨',
-    'de': 'Super! Ich erstelle dein Bild. Das kann einen Moment dauern — ich benachrichtige dich, wenn es fertig ist! ✨',
-    'fr': 'Super ! Je crée votre image. Cela peut prendre un moment — je vous préviendrai quand ce sera prêt ! ✨',
-    'es': '¡Genial! Estoy creando tu imagen. Puede tardar un momento — te avisaré cuando esté lista! ✨',
-    'it': 'Ottimo! Sto creando la tua immagine. Potrebbe volerci un momento — ti avviserò quando sarà pronta! ✨',
-    'pt': 'Ótimo! Estou criando sua imagem. Isso pode levar um momento — avisarei quando estiver pronta! ✨',
-    'ru': 'Отлично! Я создаю ваше изображение. Это может занять некоторое время — я уведомлю вас, когда будет готово! ✨',
-    'ja': '素晴らしい！画像を作成しています。少し時間がかかる場合があります — 完了したらお知らせします！ ✨',
-    'ko': '좋아요! 이미지를 생성하고 있습니다. 잠시 걸릴 수 있습니다 — 완료되면 알려드리겠습니다! ✨',
-    'zh': '太好了！我正在为您生成图片。这可能需要一点时间 — 完成后我会通知您！ ✨',
-    'hi': 'बढ़िया! मैं आपके लिए छवि बना रहा हूं। इसमें थोड़ा समय लग सकता है — तैयार होने पर मैं आपको सूचित करूंगा! ✨',
-};
-
-async function processImageInBackground({
-    user_id,
-    project_id,
-    sessionId,
-    message_text,
-    selectedType,
-    selectedLang,
-    referenceImageBuffer,
-}) {
-    try {
-        emitToProject(project_id, user_id, 'image:processing', {
-            user_id,
-            project_id,
-            session_id: sessionId,
-            message: IMAGE_START_MESSAGES[selectedLang] || IMAGE_START_MESSAGES['en'],
-            progress: 15,
-        });
-
-        const aiResult = await aiService.generateSmartContent(
-            message_text,
-            selectedType,
-            selectedLang,
-            referenceImageBuffer,
-        );
-
-        const dbImageUrlValue = aiResult.images.length > 0 ? JSON.stringify(aiResult.images) : null;
-        const [result] = await pool.query(
-            'INSERT INTO ai_chat_history (user_id, project_id, session_id, message_role, message_text, image_url) VALUES (?, ?, ?, ?, ?, ?)',
-            [user_id, project_id || null, sessionId, 'ai', aiResult.text, dbImageUrlValue],
-        );
-
-        if (aiResult.images.length > 0 && project_id) {
-            await pool.query(
-                'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
-                [aiResult.images[0], project_id],
-            );
-        }
-
-        emitToProject(project_id, user_id, 'image:ready', {
-            user_id,
-            project_id,
-            session_id: sessionId,
-            chat_id: result.insertId,
-            message_text: aiResult.text,
-            image_urls: aiResult.images,
-            progress: 100,
-        });
-
-        console.log(`[ImageGen] ✅ Tamamlandı session=${sessionId} images=${aiResult.images.length}`);
-    } catch (error) {
-        console.error('[ImageGen] Hata:', error.message);
-        emitToProject(project_id, user_id, 'image:error', {
-            user_id,
-            project_id,
-            session_id: sessionId,
-            message: error.message,
-        });
-    }
-}
 
 exports.sendMessage = async (req, res) => {
     try {
@@ -149,30 +73,36 @@ exports.sendMessage = async (req, res) => {
         // Referans görsel varsa buffer'ını al (multer ile yüklendi)
         const referenceImageBuffer = req.file ? req.file.buffer : null;
 
-        // POST / CAROUSEL: Görsel üretimi uzun sürebilir — hemen cevap dön, arka planda üret
-        const imageStartMsg = IMAGE_START_MESSAGES[selectedLang] || IMAGE_START_MESSAGES['en'];
+        // POST, CAROUSEL vb. — üretim bitene kadar bekle, görsel URL'leri yanıtta dön
+        const aiResult = await aiService.generateSmartContent(
+            message_text,
+            selectedType,
+            selectedLang,
+            referenceImageBuffer,
+        );
 
-        setImmediate(() => {
-            processImageInBackground({
-                user_id,
-                project_id,
-                sessionId,
-                message_text,
-                selectedType,
-                selectedLang,
-                referenceImageBuffer,
-            }).catch((err) => console.error('[ImageGen] Beklenmedik hata:', err.message));
-        });
+        const dbImageUrlValue = aiResult.images.length > 0 ? JSON.stringify(aiResult.images) : null;
+        const [result] = await pool.query(
+            'INSERT INTO ai_chat_history (user_id, project_id, session_id, message_role, message_text, image_url) VALUES (?, ?, ?, ?, ?, ?)',
+            [user_id, project_id || null, sessionId, 'ai', aiResult.text, dbImageUrlValue],
+        );
+
+        if (aiResult.images.length > 0 && project_id) {
+            await pool.query(
+                'UPDATE projects SET image_url = COALESCE(image_url, ?) WHERE id = ?',
+                [aiResult.images[0], project_id],
+            );
+        }
 
         return res.status(200).json({
-            message: 'Image production process started.',
+            message: 'İçerik başarıyla üretildi.',
             session_id: sessionId,
             user_message: message_text,
-            content_type: selectedType,
+            content_type: aiResult.format,
             ai_response: {
-                id: null,
-                text: imageStartMsg,
-                images: [],
+                id: result.insertId,
+                text: aiResult.text,
+                images: aiResult.images,
             },
         });
 

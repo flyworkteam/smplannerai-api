@@ -357,4 +357,4 @@ async function processVideos(user_id, project_id, videoUrls, session_id = null) 
     }
 }
 
-module.exports = { processVideos };
+module.exports = { processVideos, emitToProject };

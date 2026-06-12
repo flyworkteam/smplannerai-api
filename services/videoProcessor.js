@@ -141,6 +141,8 @@ function emitToProject(project_id, user_id, event, data) {
     }
 }
 
+exports.emitToProject = emitToProject;
+
 // ─────────────────────────────────────────────────────────────────
 // Video indir
 // ─────────────────────────────────────────────────────────────────

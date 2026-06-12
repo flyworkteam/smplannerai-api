@@ -64,7 +64,7 @@ app.use('/api/post', postRoutes);
 app.use('/api/gemini', geminiRoutes);
 app.use('/api/kling', klingRoutes);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3037;
 server.listen(PORT, () => {
     console.log(`SM Planner çalışıyor: http://localhost:${PORT}`);
     console.log(`[Socket.IO] WebSocket hazır: ws://localhost:${PORT}`);

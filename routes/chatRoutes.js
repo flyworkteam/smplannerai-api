@@ -12,6 +12,9 @@ router.post('/n8n-callback', chatController.n8nCallback);
 // Kullanıcının tüm sohbetlerinin özeti (Chat History sayfası - session bazlı)
 router.get('/user/:userId', chatController.getUserChatHistory);
 
+// Son aktif session (504 timeout kurtarma)
+router.get('/user/:userId/latest-session', chatController.getLatestSession);
+
 // Session ID'ye göre o sohbetin tüm mesajları
 router.get('/session/:sessionId', chatController.getChatHistoryBySession);
 

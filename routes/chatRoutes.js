@@ -9,6 +9,9 @@ router.post('/', upload.single('reference_image'), chatController.sendMessage);
 // n8n otomasyonundan gelen video URL callback'i
 router.post('/n8n-callback', chatController.n8nCallback);
 
+// AI mesajını şikayet et (bildir) — /:projectId wildcard'ından ÖNCE tanımlanmalı!
+router.post('/report', chatController.reportMessage);
+
 // Kullanıcının tüm sohbetlerinin özeti (Chat History sayfası - session bazlı)
 router.get('/user/:userId', chatController.getUserChatHistory);
 

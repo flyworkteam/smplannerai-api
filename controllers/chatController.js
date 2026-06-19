@@ -565,3 +565,28 @@ exports.clearUserChatHistoryByDate = async (req, res) => {
         res.status(500).json({ error: "Sunucu tarafında bir hata oluştu." });
     }
 };
+
+// Şikayet edilen AI mesajlarını veritabanına kaydeder
+exports.reportMessage = async (req, res) => {
+    try {
+        const { chat_id, user_id, reason } = req.body;
+
+        // !chat_id yanlış — 0 için de true döner. Explicit kontrol lazım.
+        if (user_id == null || user_id === undefined) {
+            return res.status(400).json({ error: "Eksik bilgi: user_id gerekli." });
+        }
+
+        // chat_id 0 veya null ise NULL olarak kaydet (mesaj henüz DB'de olmayabilir)
+        const safeChatId = (chat_id != null && chat_id !== 0) ? chat_id : null;
+
+        await pool.query(
+            'INSERT INTO reported_messages (chat_id, user_id, reason) VALUES (?, ?, ?)',
+            [safeChatId, user_id, reason || null]
+        );
+
+        return res.status(200).json({ message: "Mesaj başarıyla bildirildi." });
+    } catch (error) {
+        console.error("Report Message Error:", error);
+        res.status(500).json({ error: "İçerik bildirilirken bir hata oluştu." });
+    }
+};
